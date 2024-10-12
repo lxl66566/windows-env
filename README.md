@@ -38,3 +38,8 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 ```
+
+## Compare
+
+- set_env:
+  - it uses powershell script while this crate uses windows api

@@ -3,12 +3,12 @@ authors     = ["Absolutex <lxl66566@gmail.com>"]
 categories  = ["os"]
 description = "Easily manage Windows environment variables permanently."
 edition     = "2021"
-homepage    = "https://github.com/lxl66566/bpm-rs/tree/main/windows-env"
+homepage    = "https://github.com/lxl66566/windows-env"
 keywords    = ["windows", "env", "environment", "registry"]
 license     = "MIT"
 name        = "windows-env"
 readme      = "README.md"
-repository  = "https://github.com/lxl66566/bpm-rs/"
+repository  = "https://github.com/lxl66566/windows-env"
 version     = "0.1.0"
 
 [dependencies]
