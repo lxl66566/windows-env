@@ -24,7 +24,8 @@ fn regkey() -> io::Result<RegKey> {
     hkcu.open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
 }
 
-/// Append a value at the end to the Windows environment variable list (separated by `;`).
+/// Append a value at the end to the Windows environment variable list
+/// (separated by `;`).
 ///
 /// If the value already exists, it will not be added again.
 pub fn append<T1, T2>(var: T1, value: T2) -> io::Result<()>
@@ -35,7 +36,8 @@ where
     add_inner(var.as_ref(), value.as_ref(), false)
 }
 
-/// Prepend a value at the beginning to the Windows environment variable list (separated by `;`).
+/// Prepend a value at the beginning to the Windows environment variable list
+/// (separated by `;`).
 ///
 /// If the value already exists, it will not be added again.
 pub fn prepend<T1, T2>(var: T1, value: T2) -> io::Result<()>
@@ -71,7 +73,8 @@ fn add_inner(var: &str, value: &str, front: bool) -> io::Result<()> {
     Ok(())
 }
 
-/// Remove a value from the Windows environment variable list (separated by `;`).
+/// Remove a value from the Windows environment variable list (separated by
+/// `;`).
 ///
 /// # Returns
 ///
@@ -96,7 +99,8 @@ pub fn remove_from_list(var: &str, value: &str) -> io::Result<bool> {
     Ok(found)
 }
 
-/// Check if a value exists in the Windows environment variable list (separated by `;`).
+/// Check if a value exists in the Windows environment variable list (separated
+/// by `;`).
 pub fn exists_in_list(var: &str, value: &str) -> io::Result<bool> {
     // locked in `get`
     let env_var = get(var)?;
@@ -141,14 +145,12 @@ pub fn remove<T: AsRef<str>>(var: T) -> io::Result<()> {
 }
 
 /// Convert UTF-8 str to PCWSTR
-macro_rules! w {
-    ($x: expr) => {
-        PCWSTR::from_raw(HSTRING::from($x).as_ptr())
-    };
+fn w<T: Into<HSTRING>>(x: T) -> PCWSTR {
+    PCWSTR::from_raw(x.into().as_ptr())
 }
 
 fn notify_system() {
-    let msg = w!("Environment");
+    let msg = w("Environment");
     unsafe {
         SendMessageTimeoutW(
             HWND_BROADCAST,
