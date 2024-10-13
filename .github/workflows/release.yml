@@ -1,0 +1,29 @@
+name: test rust release action
+on:
+  push:
+    tags:
+      - "v*"
+jobs:
+  basic_test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: build rust project
+        uses: lxl66566/rust-simple-release@main
+        with:
+          # Targets to compile, seperated by comma (allow space)
+          # Support Linux, Windows and Darwin
+          targets: x86_64-pc-windows-msvc
+
+          # Choose bins to build, seperated by comma. If not set, it will build all bins in the package.
+          # This `bins` option should be a subset of target bins in `Cargo.toml`.
+          bins: wenv
+
+          # Features to enable, seperated by comma (allow space)
+          features: bin
+
+          # GITHUB TOKEN, **REQUIRED**
+          token: ${{ secrets.GH_TOKEN }}

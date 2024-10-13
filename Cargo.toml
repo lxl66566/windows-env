@@ -9,8 +9,30 @@ license     = "MIT"
 name        = "windows-env"
 readme      = "README.md"
 repository  = "https://github.com/lxl66566/windows-env"
-version     = "0.1.0"
+version     = "0.1.1"
 
 [dependencies]
+clap    = { version = "4.5.20", features = ["derive"], optional = true }
 windows = { version = "0.58.0", features = ["Win32_UI_WindowsAndMessaging"] }
 winreg  = "0.52.0"
+
+[features]
+bin     = ["clap"]
+default = []
+
+[lib]
+name = "windows_env"
+
+[[bin]]
+name              = "wenv"
+path              = "src/main.rs"
+required-features = ["bin"]
+
+[[example]]
+name = "main"
+
+[profile.release]
+lto       = true
+opt-level = "z"
+panic     = "abort"
+strip     = true

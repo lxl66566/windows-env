@@ -9,16 +9,24 @@ Features:
 
 Note:
 
-- The env operation will not affect current terminal.
+- The env operation will not affect the current terminal.
 
-## Use
+## Installation
 
-```toml
-[target."cfg(windows)".dependencies]
-windows_env = "0.1.0"
-```
+- as lib:
+  ```toml
+  [target."cfg(windows)".dependencies]
+  windows_env = "0.1.1"
+  ```
+- as executable binary:
+  ```sh
+  cargo binstall windows-env        # see cargo-binstall: https://github.com/cargo-bins/cargo-binstall
+  cargo install windows-env -F bin  # or compile from source manually
+  ```
 
 ## Example
+
+lib usage:
 
 ```rs
 fn main() -> std::io::Result<()> {
@@ -39,7 +47,14 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+executable binary: runs `wenv -h` to see help message.
+
 ## Compare
 
 - set_env:
   - it uses powershell script while this crate uses windows api
+
+## TODO
+
+- [x] cli support
+- [ ] System env modification
