@@ -58,3 +58,7 @@ executable binary: runs `wenv -h` to see help message.
 
 - [x] cli support
 - [ ] System env modification
+
+## MSRV
+
+1.70
