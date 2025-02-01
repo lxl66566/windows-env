@@ -5,7 +5,7 @@ use std::{io, sync::RwLock};
 use windows::{
     core::{HSTRING, PCWSTR},
     Win32::{
-        Foundation::LPARAM,
+        Foundation::{LPARAM, WPARAM},
         UI::WindowsAndMessaging::{
             SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
         },
@@ -155,7 +155,7 @@ fn notify_system() {
         SendMessageTimeoutW(
             HWND_BROADCAST,
             WM_SETTINGCHANGE,
-            None,
+            WPARAM(0),
             LPARAM(msg.as_ptr() as isize),
             SMTO_ABORTIFHUNG,
             500,
