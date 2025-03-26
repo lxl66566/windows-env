@@ -67,7 +67,9 @@ fn add_inner(var: &str, value: &str, front: bool) -> io::Result<()> {
         } else {
             values.push(value);
         }
-        env.set_value(var, &values.join(";"))?;
+        let new_env_var = values.join(";");
+        env.set_value(var, &new_env_var)?;
+        std::env::set_var(var, &new_env_var);
         notify_system();
     }
     Ok(())
@@ -94,7 +96,9 @@ pub fn remove_from_list(var: &str, value: &str) -> io::Result<bool> {
     let len = values.len();
     values.retain(|p| p != &value);
     let found = len != values.len();
-    env.set_value(var, &values.join(";"))?;
+    let new_env_var = values.join(";");
+    env.set_value(var, &new_env_var)?;
+    std::env::set_var(var, &new_env_var);
     notify_system();
     Ok(found)
 }
@@ -115,6 +119,7 @@ pub fn set<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> io::Result<()>
     let _lock = LOCK.write().unwrap();
     let env = regkey()?;
     env.set_value(var.as_ref(), &value.as_ref())?;
+    std::env::set_var(var.as_ref(), value.as_ref());
     notify_system();
     Ok(())
 }
@@ -140,6 +145,7 @@ pub fn remove<T: AsRef<str>>(var: T) -> io::Result<()> {
             return Err(err);
         }
     };
+    std::env::remove_var(var.as_ref());
     notify_system();
     Ok(())
 }
@@ -219,6 +225,16 @@ mod tests {
         prepend(NOT_EXIST, "test")?;
         assert_eq!(get(NOT_EXIST)?.unwrap(), "test");
         remove(NOT_EXIST)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_operation_will_affect_current_process() -> Result<(), Box<dyn std::error::Error>> {
+        let env_var = "TEST-ENV-VAR";
+        set(env_var, "test")?;
+        assert_eq!(std::env::var(env_var)?, "test");
+        remove(env_var)?;
+        assert_eq!(std::env::var(env_var), Err(std::env::VarError::NotPresent));
         Ok(())
     }
 }

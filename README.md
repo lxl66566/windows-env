@@ -1,22 +1,21 @@
 # windows-env
 
-Easily manage Windows environment variables permanently, without the need to restart your system.
+Easily manage Windows environment variables **permanently**, without the need to restart your system or terminal.
 
 Features:
 
-- Concurrent safe.
 - Easily operate list variables like `PATH`.
 
 Note:
 
-- The env operation will not affect the current terminal.
+- The env operation **will** affect the current terminal process since v0.2.0.
 
 ## Installation
 
 - as lib:
   ```toml
   [target."cfg(windows)".dependencies]
-  windows_env = "0.1.1"
+  windows_env = "0.2.0"
   ```
 - as executable binary:
   ```sh
@@ -26,28 +25,27 @@ Note:
 
 ## Example
 
-lib usage:
+- binary usage: runs `wenv -h` to see help message.
+- lib usage:
 
-```rs
-fn main() -> std::io::Result<()> {
-    windows_env::set("TEST_ENV", "test")?;
-    assert_eq!(windows_env::get("TEST_ENV")?.unwrap(), "test");
-    windows_env::remove("TEST_ENV")?;
-    assert!(windows_env::get("TEST_ENV")?.is_none());
+  ```rs
+  fn main() -> std::io::Result<()> {
+      windows_env::set("TEST_ENV", "test")?;
+      assert_eq!(windows_env::get("TEST_ENV")?.unwrap(), "test");
+      windows_env::remove("TEST_ENV")?;
+      assert!(windows_env::get("TEST_ENV")?.is_none());
 
-    windows_env::append("TEST_ENV", "test1")?;
-    windows_env::prepend("TEST_ENV", "test2")?;
-    assert_eq!(windows_env::get("TEST_ENV")?.unwrap(), "test2;test1");
+      windows_env::append("TEST_ENV", "test1")?;
+      windows_env::prepend("TEST_ENV", "test2")?;
+      assert_eq!(windows_env::get("TEST_ENV")?.unwrap(), "test2;test1");
 
-    windows_env::remove_from_list("TEST_ENV", "test2")?;
-    assert!(windows_env::exists_in_list("TEST_ENV", "test1")?);
+      windows_env::remove_from_list("TEST_ENV", "test2")?;
+      assert!(windows_env::exists_in_list("TEST_ENV", "test1")?);
 
-    windows_env::remove("TEST_ENV")?;
-    Ok(())
-}
-```
-
-executable binary: runs `wenv -h` to see help message.
+      windows_env::remove("TEST_ENV")?;
+      Ok(())
+  }
+  ```
 
 ## Compare
 
@@ -61,4 +59,4 @@ executable binary: runs `wenv -h` to see help message.
 
 ## MSRV
 
-1.70
+- v0.1.1: 1.70
