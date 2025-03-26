@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: build rust project
-        uses: lxl66566/rust-simple-release@main
+        uses: lxl66566/rust-simple-release@v0.2.5
         with:
           # Targets to compile, seperated by comma (allow space)
           # Support Linux, Windows and Darwin
