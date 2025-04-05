@@ -1,6 +1,6 @@
 # windows-env
 
-Easily manage Windows environment variables **permanently**, without the need to restart your system or terminal.
+Easily manage Windows environment variables **permanently**, without the need to restart your system. (but terminal restart is required)
 
 Features:
 
