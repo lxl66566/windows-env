@@ -1,14 +1,10 @@
 # windows-env
 
-Easily manage Windows environment variables **permanently**, without the need to restart your system. (but terminal restart is required)
+Easily manage Windows environment variables **permanently**, without the need to restart your system. (**but terminal restart is required**)
 
 Features:
 
 - Easily operate list variables like `PATH`.
-
-Note:
-
-- The env operation **will** affect the current terminal process since v0.2.0.
 
 ## Installation
 
@@ -47,9 +43,11 @@ Note:
   }
   ```
 
+  - using windows-env as a lib will affect the current process, so you can use the new env by spawning processes after modifying env in rust code.
+
 ## Compare
 
-- set_env:
+- [set_env](https://crates.io/crates/set_env):
   - it uses powershell script while this crate uses windows api
 
 ## TODO
