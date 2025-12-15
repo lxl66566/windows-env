@@ -24,6 +24,18 @@ fn regkey() -> io::Result<RegKey> {
     hkcu.open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
 }
 
+/// If the value contains `;`, return an error.
+fn check_separator(value: &str) -> io::Result<()> {
+    if value.contains(';') {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "value contains `;`",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Append a value at the end to the Windows environment variable list
 /// (separated by `;`).
 ///
@@ -49,6 +61,7 @@ where
 }
 
 fn add_inner(var: &str, value: &str, front: bool) -> io::Result<()> {
+    check_separator(value)?;
     let _lock = LOCK.write().unwrap();
     let env = regkey()?;
     let get_res = env.get_value(var);
@@ -69,7 +82,7 @@ fn add_inner(var: &str, value: &str, front: bool) -> io::Result<()> {
         }
         let new_env_var = values.join(";");
         env.set_value(var, &new_env_var)?;
-        std::env::set_var(var, &new_env_var);
+        unsafe { std::env::set_var(var, &new_env_var) };
         notify_system();
     }
     Ok(())
@@ -84,6 +97,7 @@ fn add_inner(var: &str, value: &str, front: bool) -> io::Result<()> {
 /// - If the value does not exist, return `Ok(false)`.
 /// - If an error occurred, return `Err(e)`.
 pub fn remove_from_list(var: &str, value: &str) -> io::Result<bool> {
+    check_separator(value)?;
     let _lock = LOCK.write().unwrap();
     let env = regkey()?;
     let get_res = env.get_value(var);
@@ -98,7 +112,7 @@ pub fn remove_from_list(var: &str, value: &str) -> io::Result<bool> {
     let found = len != values.len();
     let new_env_var = values.join(";");
     env.set_value(var, &new_env_var)?;
-    std::env::set_var(var, &new_env_var);
+    unsafe { std::env::set_var(var, &new_env_var) };
     notify_system();
     Ok(found)
 }
@@ -106,6 +120,7 @@ pub fn remove_from_list(var: &str, value: &str) -> io::Result<bool> {
 /// Check if a value exists in the Windows environment variable list (separated
 /// by `;`).
 pub fn exists_in_list(var: &str, value: &str) -> io::Result<bool> {
+    check_separator(value)?;
     // locked in `get`
     let env_var = get(var)?;
     match env_var {
@@ -119,7 +134,7 @@ pub fn set<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> io::Result<()>
     let _lock = LOCK.write().unwrap();
     let env = regkey()?;
     env.set_value(var.as_ref(), &value.as_ref())?;
-    std::env::set_var(var.as_ref(), value.as_ref());
+    unsafe { std::env::set_var(var.as_ref(), value.as_ref()) };
     notify_system();
     Ok(())
 }
@@ -145,7 +160,7 @@ pub fn remove<T: AsRef<str>>(var: T) -> io::Result<()> {
             return Err(err);
         }
     };
-    std::env::remove_var(var.as_ref());
+    unsafe { std::env::remove_var(var.as_ref()) };
     notify_system();
     Ok(())
 }
@@ -174,10 +189,9 @@ fn notify_system() {
 mod tests {
     use super::*;
 
-    const ENV_VAR: &str = "WINDOWS-ENV-TEST";
-
     #[test]
     fn test_get_set() -> Result<(), Box<dyn std::error::Error>> {
+        const ENV_VAR: &str = "TEST-GET-SET";
         set(ENV_VAR, "test")?;
         assert_eq!(get(ENV_VAR)?.unwrap(), "test");
         remove(ENV_VAR)?;
@@ -187,6 +201,7 @@ mod tests {
 
     #[test]
     fn test_list_operations() -> Result<(), Box<dyn std::error::Error>> {
+        const ENV_VAR: &str = "TEST-LIST-OPERATIONS";
         set(ENV_VAR, "test1;test2;te")?;
         assert!(exists_in_list(ENV_VAR, "test1")?);
         assert!(exists_in_list(ENV_VAR, "test2")?);
@@ -204,6 +219,7 @@ mod tests {
 
     #[test]
     fn test_reset_one_var() -> Result<(), Box<dyn std::error::Error>> {
+        const ENV_VAR: &str = "TEST-RESET-ONE-VAR";
         set(ENV_VAR, "test")?;
         assert_eq!(get(ENV_VAR)?.unwrap(), "test");
         set(ENV_VAR, "new_test")?;
@@ -230,11 +246,20 @@ mod tests {
 
     #[test]
     fn test_operation_will_affect_current_process() -> Result<(), Box<dyn std::error::Error>> {
-        let env_var = "TEST-ENV-VAR";
+        let env_var = "TEST-OPERATION-WILL-AFFECT-CURRENT-PROCESS";
         set(env_var, "test")?;
         assert_eq!(std::env::var(env_var)?, "test");
         remove(env_var)?;
         assert_eq!(std::env::var(env_var), Err(std::env::VarError::NotPresent));
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_value() -> Result<(), Box<dyn std::error::Error>> {
+        let env_var = "TEST-INVALID-VALUE";
+        assert!(append(env_var, "123;456").is_err());
+        assert!(prepend(env_var, "123;456").is_err());
+        assert!(remove_from_list(env_var, "123;456").is_err());
         Ok(())
     }
 }

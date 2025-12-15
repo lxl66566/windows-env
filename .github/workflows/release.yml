@@ -12,15 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: build rust project
-        uses: lxl66566/rust-simple-release@v0.2.5
+        uses: lxl66566/rust-simple-release@main
         with:
           # Targets to compile, seperated by comma (allow space)
           # Support Linux, Windows and Darwin
           targets: x86_64-pc-windows-msvc
-
-          # Choose bins to build, seperated by comma. If not set, it will build all bins in the package.
-          # This `bins` option should be a subset of target bins in `Cargo.toml`.
-          bins: wenv
 
           # Features to enable, seperated by comma (allow space)
           features: bin
