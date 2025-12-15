@@ -1,13 +1,13 @@
-use clap::Parser;
+use palc::{Parser, Subcommand};
 
-#[derive(Debug, clap::Parser, Clone)]
-#[command(author, version, about, long_about = None)]
+#[derive(Debug, Parser, Clone)]
+#[command(version, long_about)]
 struct Cli {
     #[command(subcommand)]
     command: Subcommand,
 }
 
-#[derive(Debug, clap::Subcommand, Clone)]
+#[derive(Debug, Subcommand, Clone)]
 enum Subcommand {
     /// Set a var in the Windows environment variable.
     Set { var: String, value: String },

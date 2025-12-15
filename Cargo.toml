@@ -10,15 +10,15 @@ name         = "windows-env"
 readme       = "README.md"
 repository   = "https://github.com/lxl66566/windows-env"
 rust-version = "1.70"
-version      = "0.2.0"
+version      = "0.2.1"
 
 [dependencies]
-clap    = { version = "4.5.53", features = ["derive"], optional = true }
+palc    = { version = "0.0.2", optional = true }
 windows = { version = "0.62.1", features = ["Win32_UI_WindowsAndMessaging"] }
 winreg  = "0.55.0"
 
 [features]
-bin     = ["clap"]
+bin     = ["palc"]
 default = []
 
 [lib]
