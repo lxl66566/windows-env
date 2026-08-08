@@ -1,3 +1,5 @@
+use std::process::ExitCode;
+
 use palc::{Parser, Subcommand};
 
 #[derive(Debug, Parser, Clone)]
@@ -9,13 +11,17 @@ struct Cli {
 
 #[derive(Debug, Subcommand, Clone)]
 enum Subcommand {
-    /// Set a var in the Windows environment variable.
+    /// Set a var in the Windows environment variable (as REG_SZ).
     Set { var: String, value: String },
-    /// Get the current Windows environment variable RegKey.
+    /// Set a var as REG_EXPAND_SZ so that %VAR% placeholders inside the value
+    /// are expanded by consumers.
+    SetExpandString { var: String, value: String },
+    /// Get a var from the Windows environment variable.
     Get { var: String },
     /// Remove a var from the Windows environment variable.
     Remove { var: String },
-    /// Check if a value exists in the Windows environment variable list
+    /// Check if a value exists in the Windows environment variable list.
+    /// Exits with code 1 if the value does not exist.
     Exists { var: String, value: String },
     /// Append a value at the end to the Windows environment variable list
     Append { var: String, value: String },
@@ -26,44 +32,67 @@ enum Subcommand {
     RemoveFromList { var: String, value: String },
 }
 
-fn main() -> std::io::Result<()> {
-    let cli = Cli::parse();
+fn main() -> ExitCode {
+    match run() {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
 
-    match cli.command {
+fn run() -> windows_env::Result<ExitCode> {
+    match Cli::parse().command {
         Subcommand::Set { var, value } => {
             windows_env::set(&var, &value)?;
-            println!("{}={}", var, value);
+            println!("{var}={value}");
         }
 
-        Subcommand::Get { var } => {
-            let value = windows_env::get(&var)?.unwrap_or_else(|| panic!("{} not found", var));
-            println!("{}", value);
+        Subcommand::SetExpandString { var, value } => {
+            windows_env::set_expand_string(&var, &value)?;
+            println!("{var}={value} (REG_EXPAND_SZ)");
         }
+
+        Subcommand::Get { var } => match windows_env::get(&var)? {
+            Some(value) => println!("{value}"),
+            None => {
+                eprintln!("{var} not found");
+                return Ok(ExitCode::FAILURE);
+            }
+        },
 
         Subcommand::Remove { var } => {
             windows_env::remove(&var)?;
-            println!("{} removed", var);
+            println!("{var} removed");
         }
 
         Subcommand::Exists { var, value } => {
             let exists = windows_env::exists_in_list(&var, &value)?;
-            println!("{}", exists);
+            println!("{exists}");
+            if !exists {
+                return Ok(ExitCode::FAILURE);
+            }
         }
 
         Subcommand::Append { var, value } => {
             windows_env::append(&var, &value)?;
-            println!("appended: {} to {}", value, var);
+            println!("appended: {value} to {var}");
         }
 
         Subcommand::Prepend { var, value } => {
             windows_env::prepend(&var, &value)?;
-            println!("prepended: {} to {}", value, var);
+            println!("prepended: {value} to {var}");
         }
 
         Subcommand::RemoveFromList { var, value } => {
-            windows_env::remove_from_list(&var, &value)?;
-            println!("removed: {} from {}", value, var);
+            if windows_env::remove_from_list(&var, &value)? {
+                println!("removed: {value} from {var}");
+            } else {
+                eprintln!("{value} not found in {var}");
+                return Ok(ExitCode::FAILURE);
+            }
         }
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
