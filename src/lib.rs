@@ -22,10 +22,11 @@ use winreg::{
 
 static LOCK: RwLock<()> = RwLock::new(());
 
-/// Get the current Windows environment variable RegKey.
-fn regkey() -> io::Result<RegKey> {
+/// Open the current user's environment variable RegKey with the given access
+/// rights.
+fn regkey(access: u32) -> io::Result<RegKey> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    hkcu.open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
+    hkcu.open_subkey_with_flags("Environment", access)
 }
 
 /// A variable name must be non-empty and contain no `;` or NUL.
@@ -84,7 +85,7 @@ fn add_inner(var: &str, value: &str, front: bool) -> Result<()> {
     validate_var(var)?;
     validate_list_value(value)?;
     let _lock = LOCK.write().unwrap();
-    let env = regkey()?;
+    let env = regkey(KEY_READ | KEY_WRITE)?;
     let get_res = env.get_value(var);
     let env_var: String = match get_res {
         Ok(s) => s,
@@ -127,7 +128,7 @@ where
     validate_var(var)?;
     validate_list_value(value)?;
     let _lock = LOCK.write().unwrap();
-    let env = regkey()?;
+    let env = regkey(KEY_READ | KEY_WRITE)?;
     let get_res = env.get_value(var);
     let env_var: String = match get_res {
         Ok(s) => s,
@@ -171,7 +172,7 @@ pub fn set<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> Result<()> {
     validate_var(var)?;
     validate_scalar_value(value)?;
     let _lock = LOCK.write().unwrap();
-    let env = regkey()?;
+    let env = regkey(KEY_READ | KEY_WRITE)?;
     env.set_value(var, &value)?;
     unsafe { std::env::set_var(var, value) };
     notify_system();
@@ -183,7 +184,7 @@ pub fn get<T: AsRef<str>>(var: T) -> Result<Option<String>> {
     let var = var.as_ref();
     validate_var(var)?;
     let _lock = LOCK.read().unwrap();
-    let env = regkey()?;
+    let env = regkey(KEY_READ)?;
     let res = env.get_value(var);
     match res {
         Ok(s) => Ok(Some(s)),
@@ -197,7 +198,7 @@ pub fn remove<T: AsRef<str>>(var: T) -> Result<()> {
     let var = var.as_ref();
     validate_var(var)?;
     let _lock = LOCK.write().unwrap();
-    let env = regkey()?;
+    let env = regkey(KEY_READ | KEY_WRITE)?;
     if let Err(err) = env.delete_value(var) {
         if err.kind() != io::ErrorKind::NotFound {
             return Err(err.into());
