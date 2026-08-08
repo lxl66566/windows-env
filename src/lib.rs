@@ -1,5 +1,9 @@
 //! This crate provides a wrapper for Windows variable operations.
 
+mod error;
+
+pub use error::{Error, Result};
+
 use std::{io, sync::RwLock};
 
 use windows::{
@@ -24,13 +28,29 @@ fn regkey() -> io::Result<RegKey> {
     hkcu.open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
 }
 
-/// If the value contains `;`, return an error.
-fn check_separator(value: &str) -> io::Result<()> {
-    if value.contains(';') {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "value contains `;`",
-        ))
+/// A variable name must be non-empty and contain no `;` or NUL.
+fn validate_var(var: &str) -> Result<()> {
+    if var.is_empty() || var.contains([';', '\0']) {
+        Err(Error::InvalidVarName(var.to_owned()))
+    } else {
+        Ok(())
+    }
+}
+
+/// A list value must be non-empty and contain no `;` or NUL, since `;` is the
+/// list separator.
+fn validate_list_value(value: &str) -> Result<()> {
+    if value.is_empty() || value.contains([';', '\0']) {
+        Err(Error::InvalidListValue(value.to_owned()))
+    } else {
+        Ok(())
+    }
+}
+
+/// A scalar value must not contain NUL.
+fn validate_scalar_value(value: &str) -> Result<()> {
+    if value.contains('\0') {
+        Err(Error::InvalidValue)
     } else {
         Ok(())
     }
@@ -40,7 +60,7 @@ fn check_separator(value: &str) -> io::Result<()> {
 /// (separated by `;`).
 ///
 /// If the value already exists, it will not be added again.
-pub fn append<T1, T2>(var: T1, value: T2) -> io::Result<()>
+pub fn append<T1, T2>(var: T1, value: T2) -> Result<()>
 where
     T1: AsRef<str>,
     T2: AsRef<str>,
@@ -52,7 +72,7 @@ where
 /// (separated by `;`).
 ///
 /// If the value already exists, it will not be added again.
-pub fn prepend<T1, T2>(var: T1, value: T2) -> io::Result<()>
+pub fn prepend<T1, T2>(var: T1, value: T2) -> Result<()>
 where
     T1: AsRef<str>,
     T2: AsRef<str>,
@@ -60,15 +80,16 @@ where
     add_inner(var.as_ref(), value.as_ref(), true)
 }
 
-fn add_inner(var: &str, value: &str, front: bool) -> io::Result<()> {
-    check_separator(value)?;
+fn add_inner(var: &str, value: &str, front: bool) -> Result<()> {
+    validate_var(var)?;
+    validate_list_value(value)?;
     let _lock = LOCK.write().unwrap();
     let env = regkey()?;
     let get_res = env.get_value(var);
     let env_var: String = match get_res {
         Ok(s) => s,
         Err(err) if err.kind() == io::ErrorKind::NotFound => String::default(),
-        Err(err) => return Err(err),
+        Err(err) => return Err(err.into()),
     };
     let mut values = env_var
         .split(';')
@@ -96,15 +117,22 @@ fn add_inner(var: &str, value: &str, front: bool) -> io::Result<()> {
 /// - If the value exists and successfully removed, return `Ok(true)`.
 /// - If the value does not exist, return `Ok(false)`.
 /// - If an error occurred, return `Err(e)`.
-pub fn remove_from_list(var: &str, value: &str) -> io::Result<bool> {
-    check_separator(value)?;
+pub fn remove_from_list<T1, T2>(var: T1, value: T2) -> Result<bool>
+where
+    T1: AsRef<str>,
+    T2: AsRef<str>,
+{
+    let var = var.as_ref();
+    let value = value.as_ref();
+    validate_var(var)?;
+    validate_list_value(value)?;
     let _lock = LOCK.write().unwrap();
     let env = regkey()?;
     let get_res = env.get_value(var);
     let env_var: String = match get_res {
         Ok(s) => s,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(err) => return Err(err),
+        Err(err) => return Err(err.into()),
     };
     let mut values = env_var.split(';').collect::<Vec<&str>>();
     let len = values.len();
@@ -119,8 +147,15 @@ pub fn remove_from_list(var: &str, value: &str) -> io::Result<bool> {
 
 /// Check if a value exists in the Windows environment variable list (separated
 /// by `;`).
-pub fn exists_in_list(var: &str, value: &str) -> io::Result<bool> {
-    check_separator(value)?;
+pub fn exists_in_list<T1, T2>(var: T1, value: T2) -> Result<bool>
+where
+    T1: AsRef<str>,
+    T2: AsRef<str>,
+{
+    let var = var.as_ref();
+    let value = value.as_ref();
+    validate_var(var)?;
+    validate_list_value(value)?;
     // locked in `get`
     let env_var = get(var)?;
     match env_var {
@@ -130,37 +165,45 @@ pub fn exists_in_list(var: &str, value: &str) -> io::Result<bool> {
 }
 
 /// Set a var in the Windows environment variable.
-pub fn set<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> io::Result<()> {
+pub fn set<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> Result<()> {
+    let var = var.as_ref();
+    let value = value.as_ref();
+    validate_var(var)?;
+    validate_scalar_value(value)?;
     let _lock = LOCK.write().unwrap();
     let env = regkey()?;
-    env.set_value(var.as_ref(), &value.as_ref())?;
-    unsafe { std::env::set_var(var.as_ref(), value.as_ref()) };
+    env.set_value(var, &value)?;
+    unsafe { std::env::set_var(var, value) };
     notify_system();
     Ok(())
 }
 
 /// Get a var from the Windows environment variable.
-pub fn get<T: AsRef<str>>(var: T) -> io::Result<Option<String>> {
+pub fn get<T: AsRef<str>>(var: T) -> Result<Option<String>> {
+    let var = var.as_ref();
+    validate_var(var)?;
     let _lock = LOCK.read().unwrap();
     let env = regkey()?;
-    let res = env.get_value(var.as_ref());
+    let res = env.get_value(var);
     match res {
         Ok(s) => Ok(Some(s)),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err),
+        Err(err) => Err(err.into()),
     }
 }
 
 /// Remove a var from the Windows environment variable.
-pub fn remove<T: AsRef<str>>(var: T) -> io::Result<()> {
+pub fn remove<T: AsRef<str>>(var: T) -> Result<()> {
+    let var = var.as_ref();
+    validate_var(var)?;
     let _lock = LOCK.write().unwrap();
     let env = regkey()?;
-    if let Err(err) = env.delete_value(var.as_ref()) {
+    if let Err(err) = env.delete_value(var) {
         if err.kind() != io::ErrorKind::NotFound {
-            return Err(err);
+            return Err(err.into());
         }
     };
-    unsafe { std::env::remove_var(var.as_ref()) };
+    unsafe { std::env::remove_var(var) };
     notify_system();
     Ok(())
 }
@@ -186,7 +229,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_set() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_get_set() -> Result<()> {
         const ENV_VAR: &str = "TEST-GET-SET";
         set(ENV_VAR, "test")?;
         assert_eq!(get(ENV_VAR)?.unwrap(), "test");
@@ -196,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn test_list_operations() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_list_operations() -> Result<()> {
         const ENV_VAR: &str = "TEST-LIST-OPERATIONS";
         set(ENV_VAR, "test1;test2;te")?;
         assert!(exists_in_list(ENV_VAR, "test1")?);
@@ -214,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reset_one_var() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_reset_one_var() -> Result<()> {
         const ENV_VAR: &str = "TEST-RESET-ONE-VAR";
         set(ENV_VAR, "test")?;
         assert_eq!(get(ENV_VAR)?.unwrap(), "test");
@@ -225,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn test_operate_with_not_exist_var() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_operate_with_not_exist_var() -> Result<()> {
         const NOT_EXIST: &str = "A_VAR_DOES_NOT_EXIST";
         remove(NOT_EXIST)?;
         assert!(get(NOT_EXIST)?.is_none());
@@ -241,21 +284,47 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_will_affect_current_process() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_operation_will_affect_current_process() -> Result<()> {
         let env_var = "TEST-OPERATION-WILL-AFFECT-CURRENT-PROCESS";
         set(env_var, "test")?;
-        assert_eq!(std::env::var(env_var)?, "test");
+        assert_eq!(std::env::var(env_var).unwrap(), "test");
         remove(env_var)?;
         assert_eq!(std::env::var(env_var), Err(std::env::VarError::NotPresent));
         Ok(())
     }
 
     #[test]
-    fn test_invalid_value() -> Result<(), Box<dyn std::error::Error>> {
-        let env_var = "TEST-INVALID-VALUE";
-        assert!(append(env_var, "123;456").is_err());
-        assert!(prepend(env_var, "123;456").is_err());
-        assert!(remove_from_list(env_var, "123;456").is_err());
-        Ok(())
+    fn test_invalid_input() {
+        let env_var = "TEST-INVALID-INPUT";
+        assert!(matches!(
+            append(env_var, "123;456"),
+            Err(Error::InvalidListValue(_))
+        ));
+        assert!(matches!(
+            prepend(env_var, ""),
+            Err(Error::InvalidListValue(_))
+        ));
+        assert!(matches!(
+            remove_from_list(env_var, "123;456"),
+            Err(Error::InvalidListValue(_))
+        ));
+        assert!(matches!(
+            set("", "test"),
+            Err(Error::InvalidVarName(_))
+        ));
+        assert!(matches!(get("A;B"), Err(Error::InvalidVarName(_))));
+        assert!(matches!(set(env_var, "a\0b"), Err(Error::InvalidValue)));
+    }
+
+    #[test]
+    fn test_error_converts_to_io_error() {
+        // An inner io::Error must be extracted without double wrapping, so
+        // that callers using `io::Result` keep the original error kind.
+        let not_found = remove_from_list("A_VAR_DOES_NOT_EXIST", "test")
+            .and_then(|_| get("A_VAR_DOES_NOT_EXIST").map(|_| ()));
+        assert!(not_found.is_ok());
+
+        let err: io::Error = Error::InvalidVarName("".into()).into();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 }
