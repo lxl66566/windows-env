@@ -4,20 +4,23 @@ mod error;
 
 pub use error::{Error, Result};
 
-use std::{io, sync::RwLock};
+use std::{borrow::Cow, io, iter::once, sync::RwLock};
 
 use windows::{
-    core::HSTRING,
+    core::{HSTRING, PCWSTR},
     Win32::{
         Foundation::{LPARAM, WPARAM},
+        System::Environment::ExpandEnvironmentStringsW,
         UI::WindowsAndMessaging::{
             SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
         },
     },
 };
 use winreg::{
-    enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE},
-    RegKey,
+    enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_EXPAND_SZ, REG_SZ},
+    enums::RegType,
+    types::FromRegValue,
+    RegKey, RegValue,
 };
 
 static LOCK: RwLock<()> = RwLock::new(());
@@ -68,10 +71,67 @@ fn value_eq(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
+/// Build a registry string value of the given type (REG_SZ or REG_EXPAND_SZ)
+/// from a UTF-8 string.
+fn raw_string_value(s: &str, vtype: &RegType) -> RegValue<'static> {
+    let bytes: Vec<u8> = s
+        .encode_utf16()
+        .chain(once(0))
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    RegValue {
+        bytes: Cow::Owned(bytes),
+        vtype: vtype.clone(),
+    }
+}
+
+/// Read a registry string value together with its type; `None` if absent.
+fn read_raw(env: &RegKey, var: &str) -> Result<Option<(String, RegType)>> {
+    match env.get_raw_value(var) {
+        Ok(rv) => Ok(Some((String::from_reg_value(&rv)?, rv.vtype))),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Expand `%VAR%` placeholders in a string against the current process
+/// environment.
+fn expand_env_strings(s: &str) -> io::Result<String> {
+    let src = HSTRING::from(s);
+    unsafe {
+        let len = ExpandEnvironmentStringsW(PCWSTR(src.as_ptr()), None);
+        if len == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut buf = vec![0u16; len as usize];
+        let written = ExpandEnvironmentStringsW(PCWSTR(src.as_ptr()), Some(&mut buf));
+        if written == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // The returned length includes the terminating NUL.
+        buf.truncate(written.saturating_sub(1) as usize);
+        Ok(String::from_utf16_lossy(&buf))
+    }
+}
+
+/// Mirror a registry value into the current process environment, expanding
+/// REG_EXPAND_SZ placeholders first.
+fn sync_process_env(var: &str, value: &str, vtype: &RegType) -> Result<()> {
+    let expanded = if *vtype == REG_EXPAND_SZ {
+        expand_env_strings(value)?
+    } else {
+        value.to_owned()
+    };
+    unsafe { std::env::set_var(var, expanded) };
+    Ok(())
+}
+
 /// Append a value at the end to the Windows environment variable list
 /// (separated by `;`).
 ///
-/// If the value already exists (compared case-insensitively), it will not be added again.
+/// If the value already exists (compared case-insensitively), it will not be
+/// added again. The original value type (`REG_SZ` / `REG_EXPAND_SZ`) is
+/// preserved.
 pub fn append<T1, T2>(var: T1, value: T2) -> Result<()>
 where
     T1: AsRef<str>,
@@ -83,7 +143,9 @@ where
 /// Prepend a value at the beginning to the Windows environment variable list
 /// (separated by `;`).
 ///
-/// If the value already exists (compared case-insensitively), it will not be added again.
+/// If the value already exists (compared case-insensitively), it will not be
+/// added again. The original value type (`REG_SZ` / `REG_EXPAND_SZ`) is
+/// preserved.
 pub fn prepend<T1, T2>(var: T1, value: T2) -> Result<()>
 where
     T1: AsRef<str>,
@@ -97,12 +159,7 @@ fn add_inner(var: &str, value: &str, front: bool) -> Result<()> {
     validate_list_value(value)?;
     let _lock = LOCK.write().unwrap();
     let env = regkey(KEY_READ | KEY_WRITE)?;
-    let get_res = env.get_value(var);
-    let env_var: String = match get_res {
-        Ok(s) => s,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => String::default(),
-        Err(err) => return Err(err.into()),
-    };
+    let (env_var, vtype) = read_raw(&env, var)?.unwrap_or_else(|| (String::new(), REG_SZ));
     let mut values = split_list(&env_var);
     if !values.iter().any(|v| value_eq(v, value)) {
         if front {
@@ -111,8 +168,8 @@ fn add_inner(var: &str, value: &str, front: bool) -> Result<()> {
             values.push(value);
         }
         let new_env_var = values.join(";");
-        env.set_value(var, &new_env_var)?;
-        unsafe { std::env::set_var(var, &new_env_var) };
+        env.set_raw_value(var, &raw_string_value(&new_env_var, &vtype))?;
+        sync_process_env(var, &new_env_var, &vtype)?;
         notify_system();
     }
     Ok(())
@@ -137,11 +194,9 @@ where
     validate_list_value(value)?;
     let _lock = LOCK.write().unwrap();
     let env = regkey(KEY_READ | KEY_WRITE)?;
-    let get_res = env.get_value(var);
-    let env_var: String = match get_res {
-        Ok(s) => s,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(err) => return Err(err.into()),
+    let (env_var, vtype) = match read_raw(&env, var)? {
+        Some(t) => t,
+        None => return Ok(false),
     };
     let mut values = split_list(&env_var);
     let len = values.len();
@@ -149,8 +204,8 @@ where
     let found = len != values.len();
     if found {
         let new_env_var = values.join(";");
-        env.set_value(var, &new_env_var)?;
-        unsafe { std::env::set_var(var, &new_env_var) };
+        env.set_raw_value(var, &raw_string_value(&new_env_var, &vtype))?;
+        sync_process_env(var, &new_env_var, &vtype)?;
         notify_system();
     }
     Ok(found)
@@ -175,21 +230,32 @@ where
     }
 }
 
-/// Set a var in the Windows environment variable.
+/// Set a var in the Windows environment variable (as `REG_SZ`).
 pub fn set<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> Result<()> {
-    let var = var.as_ref();
-    let value = value.as_ref();
+    set_inner(var.as_ref(), value.as_ref(), REG_SZ)
+}
+
+/// Set a var in the Windows environment variable as `REG_EXPAND_SZ`, so that
+/// `%VAR%` placeholders inside the value are expanded by consumers.
+pub fn set_expand_string<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> Result<()> {
+    set_inner(var.as_ref(), value.as_ref(), REG_EXPAND_SZ)
+}
+
+fn set_inner(var: &str, value: &str, vtype: RegType) -> Result<()> {
     validate_var(var)?;
     validate_scalar_value(value)?;
     let _lock = LOCK.write().unwrap();
     let env = regkey(KEY_READ | KEY_WRITE)?;
-    env.set_value(var, &value)?;
-    unsafe { std::env::set_var(var, value) };
+    env.set_raw_value(var, &raw_string_value(value, &vtype))?;
+    sync_process_env(var, value, &vtype)?;
     notify_system();
     Ok(())
 }
 
 /// Get a var from the Windows environment variable.
+///
+/// Returns the raw registry value; `REG_EXPAND_SZ` values are **not**
+/// expanded.
 pub fn get<T: AsRef<str>>(var: T) -> Result<Option<String>> {
     let var = var.as_ref();
     validate_var(var)?;
@@ -327,6 +393,31 @@ mod tests {
         append(ENV_VAR, "c")?;
         assert_eq!(get(ENV_VAR)?.unwrap(), "a;b;c");
         remove(ENV_VAR)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_sz_is_preserved_and_expanded_in_process() -> Result<()> {
+        const BASE: &str = "TEST-EXPAND-BASE";
+        const ENV_VAR: &str = "TEST-EXPAND-SZ";
+        set(BASE, "hello")?;
+        set_expand_string(ENV_VAR, "%TEST-EXPAND-BASE%-world")?;
+
+        // get returns the raw, unexpanded value.
+        assert_eq!(get(ENV_VAR)?.unwrap(), "%TEST-EXPAND-BASE%-world");
+        // The current process sees the expanded value.
+        assert_eq!(std::env::var(ENV_VAR).unwrap(), "hello-world");
+
+        // List operations must keep the REG_EXPAND_SZ type.
+        append(ENV_VAR, "tail")?;
+        let env = regkey(KEY_READ)?;
+        let rv = env.get_raw_value(ENV_VAR)?;
+        assert_eq!(rv.vtype, REG_EXPAND_SZ);
+        assert_eq!(get(ENV_VAR)?.unwrap(), "%TEST-EXPAND-BASE%-world;tail");
+        assert_eq!(std::env::var(ENV_VAR).unwrap(), "hello-world;tail");
+
+        remove(ENV_VAR)?;
+        remove(BASE)?;
         Ok(())
     }
 
