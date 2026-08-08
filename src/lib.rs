@@ -2,6 +2,8 @@
 
 mod error;
 mod lock;
+#[cfg(test)]
+mod mock;
 mod store;
 
 pub use error::{Error, Result};
@@ -298,107 +300,145 @@ fn notify_system() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mock::MockStore;
+
+    const VAR: &str = "WENV-TEST";
 
     #[test]
-    fn test_get_set() -> Result<()> {
-        const ENV_VAR: &str = "TEST-GET-SET";
-        set(ENV_VAR, "test")?;
-        assert_eq!(get(ENV_VAR)?.unwrap(), "test");
-        remove(ENV_VAR)?;
-        assert!(get(ENV_VAR)?.is_none());
+    fn test_set_get_delete() -> Result<()> {
+        let store = MockStore::new();
+        set_inner(&store, VAR, "test", ValueKind::Sz)?;
+        assert_eq!(store.get(VAR)?, Some(("test".into(), ValueKind::Sz)));
+        set_inner(&store, VAR, "new_test", ValueKind::Sz)?;
+        assert_eq!(store.get(VAR)?, Some(("new_test".into(), ValueKind::Sz)));
+        store.delete(VAR)?;
+        assert_eq!(store.get(VAR)?, None);
+        // Deleting an absent value is not an error.
+        store.delete(VAR)?;
         Ok(())
     }
 
     #[test]
-    fn test_list_operations() -> Result<()> {
-        const ENV_VAR: &str = "TEST-LIST-OPERATIONS";
-        set(ENV_VAR, "test1;test2;te")?;
-        assert!(exists_in_list(ENV_VAR, "test1")?);
-        assert!(exists_in_list(ENV_VAR, "test2")?);
-        assert!(exists_in_list(ENV_VAR, "te")?);
-        append(ENV_VAR, "st3")?;
-        assert_eq!(get(ENV_VAR)?.unwrap(), "test1;test2;te;st3");
-        prepend(ENV_VAR, "st4")?;
-        assert_eq!(get(ENV_VAR)?.unwrap(), "st4;test1;test2;te;st3");
-        remove_from_list(ENV_VAR, "test1")?;
-        assert_eq!(get(ENV_VAR)?.unwrap(), "st4;test2;te;st3");
-        assert!(!exists_in_list(ENV_VAR, "test1")?);
-        remove(ENV_VAR)?;
+    fn test_add_order_and_dedup() -> Result<()> {
+        let store = MockStore::new();
+        assert!(add_inner(&store, VAR, "a", false)?.is_some());
+        assert!(add_inner(&store, VAR, "b", false)?.is_some());
+        assert!(add_inner(&store, VAR, "c", true)?.is_some());
+        assert_eq!(store.raw(VAR).unwrap().0, "c;a;b");
+        // Duplicates are not written again.
+        assert!(add_inner(&store, VAR, "a", false)?.is_none());
+        assert_eq!(store.raw(VAR).unwrap().0, "c;a;b");
         Ok(())
     }
 
     #[test]
-    fn test_reset_one_var() -> Result<()> {
-        const ENV_VAR: &str = "TEST-RESET-ONE-VAR";
-        set(ENV_VAR, "test")?;
-        assert_eq!(get(ENV_VAR)?.unwrap(), "test");
-        set(ENV_VAR, "new_test")?;
-        assert_eq!(get(ENV_VAR)?.unwrap(), "new_test");
-        remove(ENV_VAR)?;
+    fn test_add_preserves_expand_sz() -> Result<()> {
+        let store = MockStore::new();
+        store.seed(VAR, "%SYSTEMROOT%\\x", ValueKind::ExpandSz);
+        let (written, kind) = add_inner(&store, VAR, "y", false)?.unwrap();
+        assert_eq!(written, "%SYSTEMROOT%\\x;y");
+        assert_eq!(kind, ValueKind::ExpandSz);
+        assert_eq!(store.raw(VAR).unwrap().1, ValueKind::ExpandSz);
         Ok(())
     }
 
     #[test]
-    fn test_operate_with_not_exist_var() -> Result<()> {
-        const NOT_EXIST: &str = "A_VAR_DOES_NOT_EXIST";
-        remove(NOT_EXIST)?;
-        assert!(get(NOT_EXIST)?.is_none());
-        assert!(!exists_in_list(NOT_EXIST, "test")?);
-        assert!(!remove_from_list(NOT_EXIST, "test")?);
-        append(NOT_EXIST, "test")?;
-        assert_eq!(get(NOT_EXIST)?.unwrap(), "test");
-        remove(NOT_EXIST)?;
-        prepend(NOT_EXIST, "test")?;
-        assert_eq!(get(NOT_EXIST)?.unwrap(), "test");
-        remove(NOT_EXIST)?;
+    fn test_remove_from_list() -> Result<()> {
+        let store = MockStore::new();
+        // Absent variable.
+        assert!(remove_from_list_inner(&store, VAR, "x")?.is_none());
+        store.seed(VAR, "a;b;a", ValueKind::Sz);
+        // All occurrences are removed.
+        assert!(remove_from_list_inner(&store, VAR, "a")?.is_some());
+        assert_eq!(store.raw(VAR).unwrap().0, "b");
+        // Absent value: nothing is written.
+        assert!(remove_from_list_inner(&store, VAR, "zzz")?.is_none());
+        assert_eq!(store.raw(VAR).unwrap().0, "b");
         Ok(())
     }
 
     #[test]
-    fn test_operation_will_affect_current_process() -> Result<()> {
-        let env_var = "TEST-OPERATION-WILL-AFFECT-CURRENT-PROCESS";
-        set(env_var, "test")?;
-        assert_eq!(std::env::var(env_var).unwrap(), "test");
-        remove(env_var)?;
-        assert_eq!(std::env::var(env_var), Err(std::env::VarError::NotPresent));
+    fn test_exists_in_list() -> Result<()> {
+        let store = MockStore::new();
+        assert!(!exists_in_list_inner(&store, VAR, "x")?);
+        store.seed(VAR, "C:\\Foo;C:\\Bar", ValueKind::Sz);
+        assert!(exists_in_list_inner(&store, VAR, "C:\\Bar")?);
+        // Comparison is ASCII case-insensitive.
+        assert!(exists_in_list_inner(&store, VAR, "c:\\foo")?);
+        assert!(!exists_in_list_inner(&store, VAR, "C:\\Baz")?);
         Ok(())
     }
 
     #[test]
-    fn test_list_case_insensitive() -> Result<()> {
-        const ENV_VAR: &str = "TEST-LIST-CASE-INSENSITIVE";
-        set(ENV_VAR, "C:\\Foo;C:\\Bar")?;
-        // Duplicate detection and removal ignore ASCII case.
-        assert!(exists_in_list(ENV_VAR, "c:\\foo")?);
-        append(ENV_VAR, "c:\\FOO")?;
-        assert_eq!(get(ENV_VAR)?.unwrap(), "C:\\Foo;C:\\Bar");
-        assert!(remove_from_list(ENV_VAR, "c:\\bar")?);
-        assert_eq!(get(ENV_VAR)?.unwrap(), "C:\\Foo");
-        remove(ENV_VAR)?;
+    fn test_empty_segments_are_dropped_on_rewrite() -> Result<()> {
+        let store = MockStore::new();
+        store.seed(VAR, "a;;b;", ValueKind::Sz);
+        assert!(exists_in_list_inner(&store, VAR, "b")?);
+        add_inner(&store, VAR, "c", false)?;
+        assert_eq!(store.raw(VAR).unwrap().0, "a;b;c");
         Ok(())
     }
 
     #[test]
-    fn test_list_ignores_empty_segments() -> Result<()> {
-        const ENV_VAR: &str = "TEST-LIST-EMPTY-SEGMENTS";
-        set(ENV_VAR, "a;;b;")?;
-        assert!(exists_in_list(ENV_VAR, "b")?);
-        // Empty segments are dropped when the list is rewritten.
-        append(ENV_VAR, "c")?;
-        assert_eq!(get(ENV_VAR)?.unwrap(), "a;b;c");
-        remove(ENV_VAR)?;
-        Ok(())
+    fn test_invalid_input() {
+        let store = MockStore::new();
+        assert!(matches!(
+            add_inner(&store, VAR, "123;456", false),
+            Err(Error::InvalidListValue(_))
+        ));
+        assert!(matches!(
+            add_inner(&store, VAR, "", false),
+            Err(Error::InvalidListValue(_))
+        ));
+        assert!(matches!(
+            remove_from_list_inner(&store, VAR, "123;456"),
+            Err(Error::InvalidListValue(_))
+        ));
+        assert!(matches!(
+            exists_in_list_inner(&store, VAR, "a\0b"),
+            Err(Error::InvalidListValue(_))
+        ));
+        assert!(matches!(
+            set_inner(&store, "", "test", ValueKind::Sz),
+            Err(Error::InvalidVarName(_))
+        ));
+        assert!(matches!(
+            set_inner(&store, "A;B", "test", ValueKind::Sz),
+            Err(Error::InvalidVarName(_))
+        ));
+        assert!(matches!(
+            set_inner(&store, VAR, "a\0b", ValueKind::Sz),
+            Err(Error::InvalidValue)
+        ));
     }
 
     #[test]
-    fn test_expand_sz_is_preserved_and_expanded_in_process() -> Result<()> {
-        const BASE: &str = "TEST-EXPAND-BASE";
-        const ENV_VAR: &str = "TEST-EXPAND-SZ";
+    fn test_error_converts_to_io_error() {
+        // An inner io::Error must be extracted without double wrapping, so
+        // that callers using `io::Result` keep the original error kind.
+        let inner = io::Error::new(io::ErrorKind::PermissionDenied, "denied");
+        let err: io::Error = Error::Registry(inner).into();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+
+        let err: io::Error = Error::InvalidVarName("".into()).into();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+
+        let err: io::Error = Error::UnsupportedValueType("REG_DWORD".into()).into();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// Integration test against the real registry: covers the WinRegStore
+    /// boundary (raw value read/write, type round-trip) and
+    /// ExpandEnvironmentStringsW, which the mock cannot exercise.
+    #[test]
+    fn test_integration_expand_sz_roundtrip() -> Result<()> {
+        const BASE: &str = "WENV-ITEST-BASE";
+        const ENV_VAR: &str = "WENV-ITEST-EXPAND-SZ";
         set(BASE, "hello")?;
-        set_expand_string(ENV_VAR, "%TEST-EXPAND-BASE%-world")?;
+        set_expand_string(ENV_VAR, "%WENV-ITEST-BASE%-world")?;
 
         // get returns the raw, unexpanded value.
-        assert_eq!(get(ENV_VAR)?.unwrap(), "%TEST-EXPAND-BASE%-world");
+        assert_eq!(get(ENV_VAR)?.unwrap(), "%WENV-ITEST-BASE%-world");
         // The current process sees the expanded value.
         assert_eq!(std::env::var(ENV_VAR).unwrap(), "hello-world");
 
@@ -407,46 +447,15 @@ mod tests {
         let store = WinRegStore::read_only()?;
         let (_, kind) = store.get(ENV_VAR)?.unwrap();
         assert_eq!(kind, ValueKind::ExpandSz);
-        assert_eq!(get(ENV_VAR)?.unwrap(), "%TEST-EXPAND-BASE%-world;tail");
+        assert_eq!(get(ENV_VAR)?.unwrap(), "%WENV-ITEST-BASE%-world;tail");
         assert_eq!(std::env::var(ENV_VAR).unwrap(), "hello-world;tail");
 
         remove(ENV_VAR)?;
         remove(BASE)?;
+        assert_eq!(
+            std::env::var(ENV_VAR),
+            Err(std::env::VarError::NotPresent)
+        );
         Ok(())
-    }
-
-    #[test]
-    fn test_invalid_input() {
-        let env_var = "TEST-INVALID-INPUT";
-        assert!(matches!(
-            append(env_var, "123;456"),
-            Err(Error::InvalidListValue(_))
-        ));
-        assert!(matches!(
-            prepend(env_var, ""),
-            Err(Error::InvalidListValue(_))
-        ));
-        assert!(matches!(
-            remove_from_list(env_var, "123;456"),
-            Err(Error::InvalidListValue(_))
-        ));
-        assert!(matches!(
-            set("", "test"),
-            Err(Error::InvalidVarName(_))
-        ));
-        assert!(matches!(get("A;B"), Err(Error::InvalidVarName(_))));
-        assert!(matches!(set(env_var, "a\0b"), Err(Error::InvalidValue)));
-    }
-
-    #[test]
-    fn test_error_converts_to_io_error() {
-        // An inner io::Error must be extracted without double wrapping, so
-        // that callers using `io::Result` keep the original error kind.
-        let not_found = remove_from_list("A_VAR_DOES_NOT_EXIST", "test")
-            .and_then(|_| get("A_VAR_DOES_NOT_EXIST").map(|_| ()));
-        assert!(not_found.is_ok());
-
-        let err: io::Error = Error::InvalidVarName("".into()).into();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 }
