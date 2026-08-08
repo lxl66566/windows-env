@@ -1,10 +1,11 @@
 //! This crate provides a wrapper for Windows variable operations.
 
 mod error;
+mod lock;
 
 pub use error::{Error, Result};
 
-use std::{borrow::Cow, io, iter::once, sync::RwLock};
+use std::{borrow::Cow, io, iter::once};
 
 use windows::{
     core::{HSTRING, PCWSTR},
@@ -22,8 +23,6 @@ use winreg::{
     types::FromRegValue,
     RegKey, RegValue,
 };
-
-static LOCK: RwLock<()> = RwLock::new(());
 
 /// Open the current user's environment variable RegKey with the given access
 /// rights.
@@ -157,7 +156,7 @@ where
 fn add_inner(var: &str, value: &str, front: bool) -> Result<()> {
     validate_var(var)?;
     validate_list_value(value)?;
-    let _lock = LOCK.write().unwrap();
+    let _guard = lock::lock()?;
     let env = regkey(KEY_READ | KEY_WRITE)?;
     let (env_var, vtype) = read_raw(&env, var)?.unwrap_or_else(|| (String::new(), REG_SZ));
     let mut values = split_list(&env_var);
@@ -192,7 +191,7 @@ where
     let value = value.as_ref();
     validate_var(var)?;
     validate_list_value(value)?;
-    let _lock = LOCK.write().unwrap();
+    let _guard = lock::lock()?;
     let env = regkey(KEY_READ | KEY_WRITE)?;
     let (env_var, vtype) = match read_raw(&env, var)? {
         Some(t) => t,
@@ -222,7 +221,7 @@ where
     let value = value.as_ref();
     validate_var(var)?;
     validate_list_value(value)?;
-    // locked in `get`
+    // Atomic by design: one registry read, then an in-memory comparison.
     let env_var = get(var)?;
     match env_var {
         Some(s) => Ok(split_list(&s).iter().any(|p| value_eq(p, value))),
@@ -244,7 +243,7 @@ pub fn set_expand_string<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> 
 fn set_inner(var: &str, value: &str, vtype: RegType) -> Result<()> {
     validate_var(var)?;
     validate_scalar_value(value)?;
-    let _lock = LOCK.write().unwrap();
+    let _guard = lock::lock()?;
     let env = regkey(KEY_READ | KEY_WRITE)?;
     env.set_raw_value(var, &raw_string_value(value, &vtype))?;
     sync_process_env(var, value, &vtype)?;
@@ -259,7 +258,7 @@ fn set_inner(var: &str, value: &str, vtype: RegType) -> Result<()> {
 pub fn get<T: AsRef<str>>(var: T) -> Result<Option<String>> {
     let var = var.as_ref();
     validate_var(var)?;
-    let _lock = LOCK.read().unwrap();
+    // A single registry read is atomic; no lock is needed here.
     let env = regkey(KEY_READ)?;
     let res = env.get_value(var);
     match res {
@@ -273,7 +272,7 @@ pub fn get<T: AsRef<str>>(var: T) -> Result<Option<String>> {
 pub fn remove<T: AsRef<str>>(var: T) -> Result<()> {
     let var = var.as_ref();
     validate_var(var)?;
-    let _lock = LOCK.write().unwrap();
+    let _guard = lock::lock()?;
     let env = regkey(KEY_READ | KEY_WRITE)?;
     if let Err(err) = env.delete_value(var) {
         if err.kind() != io::ErrorKind::NotFound {
