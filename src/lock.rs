@@ -3,11 +3,11 @@
 use std::io;
 
 use windows::{
-    core::{HSTRING, PCWSTR},
     Win32::{
         Foundation::{CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0},
-        System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject, INFINITE},
+        System::Threading::{CreateMutexW, INFINITE, ReleaseMutex, WaitForSingleObject},
     },
+    core::{HSTRING, PCWSTR},
 };
 
 /// Session-local named mutex guarding environment variable writes. `Local\`
@@ -30,11 +30,10 @@ pub fn lock() -> io::Result<NamedMutexGuard> {
             WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(NamedMutexGuard(handle)),
             other => {
                 let _ = CloseHandle(handle);
-                Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("WaitForSingleObject returned {other:?}"),
-                ))
-            }
+                Err(io::Error::other(format!(
+                    "WaitForSingleObject returned {other:?}"
+                )))
+            },
         }
     }
 }

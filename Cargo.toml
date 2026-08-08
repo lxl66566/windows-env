@@ -1,32 +1,23 @@
 [package]
-authors      = ["Absolutex <lxl66566@gmail.com>"]
-categories   = ["os"]
-description  = "Easily manage Windows environment variables permanently."
-edition      = "2021"
-homepage     = "https://github.com/lxl66566/windows-env"
-keywords     = ["windows", "env", "environment", "registry"]
-license      = "MIT"
 name         = "windows-env"
+version      = "0.3.0"
+edition      = "2021"
+rust-version = "1.74"
+description  = "Easily manage Windows environment variables permanently."
 readme       = "README.md"
+homepage     = "https://github.com/lxl66566/windows-env"
 repository   = "https://github.com/lxl66566/windows-env"
-rust-version = "1.70"
-version      = "0.2.1"
-
-[dependencies]
-palc      = { version = "0.0.2", optional = true }
-thiserror = "2"
-windows   = { version = "0.62.1", features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_System_Environment",
-    "Win32_System_Threading",
-    "Win32_UI_WindowsAndMessaging",
-] }
-winreg    = "0.56.0"
-
-[features]
-bin     = ["palc"]
-default = []
+license      = "MIT"
+keywords     = ["env", "environment", "registry", "windows"]
+categories   = ["os"]
+include      = [
+  "/CHANGELOG.md",
+  "/LICENSE-*",
+  "/README.md",
+  "/benches/**",
+  "/src/**",
+  "/tests/**",
+]
 
 [lib]
 name = "windows_env"
@@ -39,8 +30,41 @@ required-features = ["bin"]
 [[example]]
 name = "main"
 
+[dependencies]
+palc      = { version = "0.0.2", optional = true }
+thiserror = "2"
+windows   = {
+  version  = "0.62.1",
+  features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Environment",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+  ]
+}
+winreg    = "0.56.0"
+
+[features]
+default = []
+bin     = ["palc"]
+
+[lints.clippy]
+all                     = { level = "warn", priority = -1 }
+cargo                   = { level = "warn", priority = -1 }
+doc_markdown            = "allow"
+missing_errors_doc      = "allow"
+missing_panics_doc      = "allow"
+multiple_crate_versions = "allow"
+pedantic                = { level = "warn", priority = -1 }
+wildcard_imports        = "allow"
+
+[lints.rust]
+unsafe_code           = "allow"
+unused_qualifications = "warn"
+
 [profile.release]
-lto       = true
-opt-level = "z"
-panic     = "abort"
+opt-level = "s"
 strip     = true
+lto       = true
+panic     = "abort"

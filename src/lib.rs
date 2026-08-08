@@ -3,25 +3,23 @@
 mod error;
 mod lock;
 
-pub use error::{Error, Result};
-
 use std::{borrow::Cow, io, iter::once};
 
+pub use error::{Error, Result};
 use windows::{
-    core::{HSTRING, PCWSTR},
     Win32::{
         Foundation::{LPARAM, WPARAM},
         System::Environment::ExpandEnvironmentStringsW,
         UI::WindowsAndMessaging::{
-            SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+            HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
         },
     },
+    core::{HSTRING, PCWSTR},
 };
 use winreg::{
-    enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_EXPAND_SZ, REG_SZ},
-    enums::RegType,
-    types::FromRegValue,
     RegKey, RegValue,
+    enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_EXPAND_SZ, REG_SZ, RegType},
+    types::FromRegValue,
 };
 
 /// Open the current user's environment variable RegKey with the given access
@@ -193,9 +191,8 @@ where
     validate_list_value(value)?;
     let _guard = lock::lock()?;
     let env = regkey(KEY_READ | KEY_WRITE)?;
-    let (env_var, vtype) = match read_raw(&env, var)? {
-        Some(t) => t,
-        None => return Ok(false),
+    let Some((env_var, vtype)) = read_raw(&env, var)? else {
+        return Ok(false);
     };
     let mut values = split_list(&env_var);
     let len = values.len();
@@ -231,22 +228,22 @@ where
 
 /// Set a var in the Windows environment variable (as `REG_SZ`).
 pub fn set<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> Result<()> {
-    set_inner(var.as_ref(), value.as_ref(), REG_SZ)
+    set_inner(var.as_ref(), value.as_ref(), &REG_SZ)
 }
 
 /// Set a var in the Windows environment variable as `REG_EXPAND_SZ`, so that
 /// `%VAR%` placeholders inside the value are expanded by consumers.
 pub fn set_expand_string<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> Result<()> {
-    set_inner(var.as_ref(), value.as_ref(), REG_EXPAND_SZ)
+    set_inner(var.as_ref(), value.as_ref(), &REG_EXPAND_SZ)
 }
 
-fn set_inner(var: &str, value: &str, vtype: RegType) -> Result<()> {
+fn set_inner(var: &str, value: &str, vtype: &RegType) -> Result<()> {
     validate_var(var)?;
     validate_scalar_value(value)?;
     let _guard = lock::lock()?;
     let env = regkey(KEY_READ | KEY_WRITE)?;
-    env.set_raw_value(var, &raw_string_value(value, &vtype))?;
-    sync_process_env(var, value, &vtype)?;
+    env.set_raw_value(var, &raw_string_value(value, vtype))?;
+    sync_process_env(var, value, vtype)?;
     notify_system();
     Ok(())
 }
@@ -278,7 +275,7 @@ pub fn remove<T: AsRef<str>>(var: T) -> Result<()> {
         if err.kind() != io::ErrorKind::NotFound {
             return Err(err.into());
         }
-    };
+    }
     unsafe { std::env::remove_var(var) };
     notify_system();
     Ok(())
@@ -435,10 +432,7 @@ mod tests {
             remove_from_list(env_var, "123;456"),
             Err(Error::InvalidListValue(_))
         ));
-        assert!(matches!(
-            set("", "test"),
-            Err(Error::InvalidVarName(_))
-        ));
+        assert!(matches!(set("", "test"), Err(Error::InvalidVarName(_))));
         assert!(matches!(get("A;B"), Err(Error::InvalidVarName(_))));
         assert!(matches!(set(env_var, "a\0b"), Err(Error::InvalidValue)));
     }
@@ -451,7 +445,7 @@ mod tests {
             .and_then(|_| get("A_VAR_DOES_NOT_EXIST").map(|_| ()));
         assert!(not_found.is_ok());
 
-        let err: io::Error = Error::InvalidVarName("".into()).into();
+        let err: io::Error = Error::InvalidVarName(String::new()).into();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 }

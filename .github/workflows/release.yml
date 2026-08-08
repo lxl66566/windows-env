@@ -1,25 +1,24 @@
-name: test rust release action
+name: rust release action
 on:
   push:
     tags:
       - "v*"
+
+permissions:
+  contents: write
+
 jobs:
-  basic_test:
+  release:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - name: build rust project
+      - uses: actions/checkout@v7
+      - name: release rust project
         uses: lxl66566/rust-simple-release@main
         with:
-          # Targets to compile, seperated by comma (allow space)
-          # Support Linux, Windows and Darwin
-          targets: x86_64-pc-windows-msvc
-
-          # Features to enable, seperated by comma (allow space)
+          targets: |
+            aarch64-pc-windows-msvc
+            x86_64-pc-windows-msvc
           features: bin
-
-          # GITHUB TOKEN, **REQUIRED**
-          token: ${{ secrets.GH_TOKEN }}

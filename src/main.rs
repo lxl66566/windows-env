@@ -38,7 +38,7 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -47,16 +47,17 @@ fn run() -> windows_env::Result<ExitCode> {
         Subcommand::Set { var, value } => {
             windows_env::set(&var, &value)?;
             println!("{var}={value}");
-        }
+        },
 
         Subcommand::SetExpandString { var, value } => {
             windows_env::set_expand_string(&var, &value)?;
             println!("{var}={value} (REG_EXPAND_SZ)");
-        }
+        },
 
-        Subcommand::Get { var } => match windows_env::get(&var)? {
-            Some(value) => println!("{value}"),
-            None => {
+        Subcommand::Get { var } => {
+            if let Some(value) = windows_env::get(&var)? {
+                println!("{value}")
+            } else {
                 eprintln!("{var} not found");
                 return Ok(ExitCode::FAILURE);
             }
@@ -65,7 +66,7 @@ fn run() -> windows_env::Result<ExitCode> {
         Subcommand::Remove { var } => {
             windows_env::remove(&var)?;
             println!("{var} removed");
-        }
+        },
 
         Subcommand::Exists { var, value } => {
             let exists = windows_env::exists_in_list(&var, &value)?;
@@ -73,17 +74,17 @@ fn run() -> windows_env::Result<ExitCode> {
             if !exists {
                 return Ok(ExitCode::FAILURE);
             }
-        }
+        },
 
         Subcommand::Append { var, value } => {
             windows_env::append(&var, &value)?;
             println!("appended: {value} to {var}");
-        }
+        },
 
         Subcommand::Prepend { var, value } => {
             windows_env::prepend(&var, &value)?;
             println!("prepended: {value} to {var}");
-        }
+        },
 
         Subcommand::RemoveFromList { var, value } => {
             if windows_env::remove_from_list(&var, &value)? {
@@ -92,7 +93,7 @@ fn run() -> windows_env::Result<ExitCode> {
                 eprintln!("{value} not found in {var}");
                 return Ok(ExitCode::FAILURE);
             }
-        }
+        },
     }
     Ok(ExitCode::SUCCESS)
 }
