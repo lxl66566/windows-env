@@ -3,7 +3,7 @@
 use std::{io, sync::RwLock};
 
 use windows::{
-    core::{HSTRING, PCWSTR},
+    core::HSTRING,
     Win32::{
         Foundation::{LPARAM, WPARAM},
         UI::WindowsAndMessaging::{
@@ -165,13 +165,9 @@ pub fn remove<T: AsRef<str>>(var: T) -> io::Result<()> {
     Ok(())
 }
 
-/// Convert UTF-8 str to PCWSTR
-fn w<T: Into<HSTRING>>(x: T) -> PCWSTR {
-    PCWSTR::from_raw(x.into().as_ptr())
-}
-
 fn notify_system() {
-    let msg = w("Environment");
+    // The HSTRING must outlive the SendMessageTimeoutW call.
+    let msg = HSTRING::from("Environment");
     unsafe {
         SendMessageTimeoutW(
             HWND_BROADCAST,
