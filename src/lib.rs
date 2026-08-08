@@ -2,11 +2,13 @@
 
 mod error;
 mod lock;
+mod store;
 
 pub use error::{Error, Result};
 
-use std::{borrow::Cow, io, iter::once};
+use std::io;
 
+use store::{EnvStore, ValueKind, WinRegStore};
 use windows::{
     core::{HSTRING, PCWSTR},
     Win32::{
@@ -17,19 +19,6 @@ use windows::{
         },
     },
 };
-use winreg::{
-    enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_EXPAND_SZ, REG_SZ},
-    enums::RegType,
-    types::FromRegValue,
-    RegKey, RegValue,
-};
-
-/// Open the current user's environment variable RegKey with the given access
-/// rights.
-fn regkey(access: u32) -> io::Result<RegKey> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    hkcu.open_subkey_with_flags("Environment", access)
-}
 
 /// A variable name must be non-empty and contain no `;` or NUL.
 fn validate_var(var: &str) -> Result<()> {
@@ -70,29 +59,6 @@ fn value_eq(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
-/// Build a registry string value of the given type (REG_SZ or REG_EXPAND_SZ)
-/// from a UTF-8 string.
-fn raw_string_value(s: &str, vtype: &RegType) -> RegValue<'static> {
-    let bytes: Vec<u8> = s
-        .encode_utf16()
-        .chain(once(0))
-        .flat_map(u16::to_le_bytes)
-        .collect();
-    RegValue {
-        bytes: Cow::Owned(bytes),
-        vtype: vtype.clone(),
-    }
-}
-
-/// Read a registry string value together with its type; `None` if absent.
-fn read_raw(env: &RegKey, var: &str) -> Result<Option<(String, RegType)>> {
-    match env.get_raw_value(var) {
-        Ok(rv) => Ok(Some((String::from_reg_value(&rv)?, rv.vtype))),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err.into()),
-    }
-}
-
 /// Expand `%VAR%` placeholders in a string against the current process
 /// environment.
 fn expand_env_strings(s: &str) -> io::Result<String> {
@@ -113,10 +79,10 @@ fn expand_env_strings(s: &str) -> io::Result<String> {
     }
 }
 
-/// Mirror a registry value into the current process environment, expanding
-/// REG_EXPAND_SZ placeholders first.
-fn sync_process_env(var: &str, value: &str, vtype: &RegType) -> Result<()> {
-    let expanded = if *vtype == REG_EXPAND_SZ {
+/// Mirror a stored value into the current process environment, expanding
+/// [`ValueKind::ExpandSz`] placeholders first.
+fn sync_process_env(var: &str, value: &str, kind: ValueKind) -> Result<()> {
+    let expanded = if kind == ValueKind::ExpandSz {
         expand_env_strings(value)?
     } else {
         value.to_owned()
@@ -136,7 +102,7 @@ where
     T1: AsRef<str>,
     T2: AsRef<str>,
 {
-    add_inner(var.as_ref(), value.as_ref(), false)
+    add(var.as_ref(), value.as_ref(), false)
 }
 
 /// Prepend a value at the beginning to the Windows environment variable list
@@ -150,28 +116,46 @@ where
     T1: AsRef<str>,
     T2: AsRef<str>,
 {
-    add_inner(var.as_ref(), value.as_ref(), true)
+    add(var.as_ref(), value.as_ref(), true)
 }
 
-fn add_inner(var: &str, value: &str, front: bool) -> Result<()> {
-    validate_var(var)?;
-    validate_list_value(value)?;
+fn add(var: &str, value: &str, front: bool) -> Result<()> {
     let _guard = lock::lock()?;
-    let env = regkey(KEY_READ | KEY_WRITE)?;
-    let (env_var, vtype) = read_raw(&env, var)?.unwrap_or_else(|| (String::new(), REG_SZ));
-    let mut values = split_list(&env_var);
-    if !values.iter().any(|v| value_eq(v, value)) {
-        if front {
-            values.insert(0, value);
-        } else {
-            values.push(value);
-        }
-        let new_env_var = values.join(";");
-        env.set_raw_value(var, &raw_string_value(&new_env_var, &vtype))?;
-        sync_process_env(var, &new_env_var, &vtype)?;
+    let store = WinRegStore::writable()?;
+    if let Some((new_value, kind)) = add_inner(&store, var, value, front)? {
+        sync_process_env(var, &new_value, kind)?;
         notify_system();
     }
     Ok(())
+}
+
+/// Core add logic, generic over the storage backend.
+///
+/// Returns the written value and its type, or `None` if the value already
+/// existed and nothing was written.
+fn add_inner<S: EnvStore>(
+    store: &S,
+    var: &str,
+    value: &str,
+    front: bool,
+) -> Result<Option<(String, ValueKind)>> {
+    validate_var(var)?;
+    validate_list_value(value)?;
+    let (env_var, kind) = store
+        .get(var)?
+        .unwrap_or_else(|| (String::new(), ValueKind::Sz));
+    let mut values = split_list(&env_var);
+    if values.iter().any(|v| value_eq(v, value)) {
+        return Ok(None);
+    }
+    if front {
+        values.insert(0, value);
+    } else {
+        values.push(value);
+    }
+    let new_env_var = values.join(";");
+    store.set(var, &new_env_var, kind)?;
+    Ok(Some((new_env_var, kind)))
 }
 
 /// Remove a value from the Windows environment variable list (separated by
@@ -188,26 +172,40 @@ where
     T2: AsRef<str>,
 {
     let var = var.as_ref();
-    let value = value.as_ref();
+    let _guard = lock::lock()?;
+    let store = WinRegStore::writable()?;
+    let removed = remove_from_list_inner(&store, var, value.as_ref())?;
+    if let Some((new_value, kind)) = &removed {
+        sync_process_env(var, new_value, *kind)?;
+        notify_system();
+    }
+    Ok(removed.is_some())
+}
+
+/// Core remove logic, generic over the storage backend.
+///
+/// Returns the written value and its type, or `None` if the value was absent
+/// and nothing was written.
+fn remove_from_list_inner<S: EnvStore>(
+    store: &S,
+    var: &str,
+    value: &str,
+) -> Result<Option<(String, ValueKind)>> {
     validate_var(var)?;
     validate_list_value(value)?;
-    let _guard = lock::lock()?;
-    let env = regkey(KEY_READ | KEY_WRITE)?;
-    let (env_var, vtype) = match read_raw(&env, var)? {
+    let (env_var, kind) = match store.get(var)? {
         Some(t) => t,
-        None => return Ok(false),
+        None => return Ok(None),
     };
     let mut values = split_list(&env_var);
     let len = values.len();
     values.retain(|p| !value_eq(p, value));
-    let found = len != values.len();
-    if found {
-        let new_env_var = values.join(";");
-        env.set_raw_value(var, &raw_string_value(&new_env_var, &vtype))?;
-        sync_process_env(var, &new_env_var, &vtype)?;
-        notify_system();
+    if values.len() == len {
+        return Ok(None);
     }
-    Ok(found)
+    let new_env_var = values.join(";");
+    store.set(var, &new_env_var, kind)?;
+    Ok(Some((new_env_var, kind)))
 }
 
 /// Check if a value exists in the Windows environment variable list (separated
@@ -217,38 +215,44 @@ where
     T1: AsRef<str>,
     T2: AsRef<str>,
 {
-    let var = var.as_ref();
-    let value = value.as_ref();
+    let store = WinRegStore::read_only()?;
+    exists_in_list_inner(&store, var.as_ref(), value.as_ref())
+}
+
+fn exists_in_list_inner<S: EnvStore>(store: &S, var: &str, value: &str) -> Result<bool> {
     validate_var(var)?;
     validate_list_value(value)?;
-    // Atomic by design: one registry read, then an in-memory comparison.
-    let env_var = get(var)?;
-    match env_var {
-        Some(s) => Ok(split_list(&s).iter().any(|p| value_eq(p, value))),
+    // Atomic by design: one store read, then an in-memory comparison.
+    match store.get(var)? {
+        Some((s, _)) => Ok(split_list(&s).iter().any(|p| value_eq(p, value))),
         None => Ok(false),
     }
 }
 
 /// Set a var in the Windows environment variable (as `REG_SZ`).
 pub fn set<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> Result<()> {
-    set_inner(var.as_ref(), value.as_ref(), REG_SZ)
+    set_with_kind(var.as_ref(), value.as_ref(), ValueKind::Sz)
 }
 
 /// Set a var in the Windows environment variable as `REG_EXPAND_SZ`, so that
 /// `%VAR%` placeholders inside the value are expanded by consumers.
 pub fn set_expand_string<T1: AsRef<str>, T2: AsRef<str>>(var: T1, value: T2) -> Result<()> {
-    set_inner(var.as_ref(), value.as_ref(), REG_EXPAND_SZ)
+    set_with_kind(var.as_ref(), value.as_ref(), ValueKind::ExpandSz)
 }
 
-fn set_inner(var: &str, value: &str, vtype: RegType) -> Result<()> {
-    validate_var(var)?;
-    validate_scalar_value(value)?;
+fn set_with_kind(var: &str, value: &str, kind: ValueKind) -> Result<()> {
     let _guard = lock::lock()?;
-    let env = regkey(KEY_READ | KEY_WRITE)?;
-    env.set_raw_value(var, &raw_string_value(value, &vtype))?;
-    sync_process_env(var, value, &vtype)?;
+    let store = WinRegStore::writable()?;
+    set_inner(&store, var, value, kind)?;
+    sync_process_env(var, value, kind)?;
     notify_system();
     Ok(())
+}
+
+fn set_inner<S: EnvStore>(store: &S, var: &str, value: &str, kind: ValueKind) -> Result<()> {
+    validate_var(var)?;
+    validate_scalar_value(value)?;
+    store.set(var, value, kind)
 }
 
 /// Get a var from the Windows environment variable.
@@ -259,13 +263,8 @@ pub fn get<T: AsRef<str>>(var: T) -> Result<Option<String>> {
     let var = var.as_ref();
     validate_var(var)?;
     // A single registry read is atomic; no lock is needed here.
-    let env = regkey(KEY_READ)?;
-    let res = env.get_value(var);
-    match res {
-        Ok(s) => Ok(Some(s)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err.into()),
-    }
+    let store = WinRegStore::read_only()?;
+    Ok(store.get(var)?.map(|(s, _)| s))
 }
 
 /// Remove a var from the Windows environment variable.
@@ -273,12 +272,8 @@ pub fn remove<T: AsRef<str>>(var: T) -> Result<()> {
     let var = var.as_ref();
     validate_var(var)?;
     let _guard = lock::lock()?;
-    let env = regkey(KEY_READ | KEY_WRITE)?;
-    if let Err(err) = env.delete_value(var) {
-        if err.kind() != io::ErrorKind::NotFound {
-            return Err(err.into());
-        }
-    };
+    let store = WinRegStore::writable()?;
+    store.delete(var)?;
     unsafe { std::env::remove_var(var) };
     notify_system();
     Ok(())
@@ -409,9 +404,9 @@ mod tests {
 
         // List operations must keep the REG_EXPAND_SZ type.
         append(ENV_VAR, "tail")?;
-        let env = regkey(KEY_READ)?;
-        let rv = env.get_raw_value(ENV_VAR)?;
-        assert_eq!(rv.vtype, REG_EXPAND_SZ);
+        let store = WinRegStore::read_only()?;
+        let (_, kind) = store.get(ENV_VAR)?.unwrap();
+        assert_eq!(kind, ValueKind::ExpandSz);
         assert_eq!(get(ENV_VAR)?.unwrap(), "%TEST-EXPAND-BASE%-world;tail");
         assert_eq!(std::env::var(ENV_VAR).unwrap(), "hello-world;tail");
 

@@ -19,6 +19,10 @@ pub enum Error {
     #[error("invalid value: must not contain NUL")]
     InvalidValue,
 
+    /// The registry value has a type other than `REG_SZ` / `REG_EXPAND_SZ`.
+    #[error("unsupported registry value type: {0}")]
+    UnsupportedValueType(String),
+
     /// An error from the underlying registry or Win32 call.
     #[error(transparent)]
     Registry(#[from] io::Error),
@@ -31,6 +35,9 @@ impl From<Error> for io::Error {
     fn from(err: Error) -> Self {
         match err {
             Error::Registry(inner) => inner,
+            other @ Error::UnsupportedValueType(_) => {
+                io::Error::new(io::ErrorKind::InvalidData, other)
+            }
             other => io::Error::new(io::ErrorKind::InvalidInput, other),
         }
     }
