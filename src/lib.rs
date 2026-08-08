@@ -57,10 +57,21 @@ fn validate_scalar_value(value: &str) -> Result<()> {
     }
 }
 
+/// Split a `;`-separated list into its non-empty entries.
+fn split_list(s: &str) -> Vec<&str> {
+    s.split(';').filter(|x| !x.is_empty()).collect()
+}
+
+/// Environment variable list entries (usually paths) are case-insensitive on
+/// Windows.
+fn value_eq(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
+}
+
 /// Append a value at the end to the Windows environment variable list
 /// (separated by `;`).
 ///
-/// If the value already exists, it will not be added again.
+/// If the value already exists (compared case-insensitively), it will not be added again.
 pub fn append<T1, T2>(var: T1, value: T2) -> Result<()>
 where
     T1: AsRef<str>,
@@ -72,7 +83,7 @@ where
 /// Prepend a value at the beginning to the Windows environment variable list
 /// (separated by `;`).
 ///
-/// If the value already exists, it will not be added again.
+/// If the value already exists (compared case-insensitively), it will not be added again.
 pub fn prepend<T1, T2>(var: T1, value: T2) -> Result<()>
 where
     T1: AsRef<str>,
@@ -92,11 +103,8 @@ fn add_inner(var: &str, value: &str, front: bool) -> Result<()> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => String::default(),
         Err(err) => return Err(err.into()),
     };
-    let mut values = env_var
-        .split(';')
-        .filter(|x| !x.is_empty())
-        .collect::<Vec<&str>>();
-    if !values.contains(&value) {
+    let mut values = split_list(&env_var);
+    if !values.iter().any(|v| value_eq(v, value)) {
         if front {
             values.insert(0, value);
         } else {
@@ -135,19 +143,21 @@ where
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(err) => return Err(err.into()),
     };
-    let mut values = env_var.split(';').collect::<Vec<&str>>();
+    let mut values = split_list(&env_var);
     let len = values.len();
-    values.retain(|p| p != &value);
+    values.retain(|p| !value_eq(p, value));
     let found = len != values.len();
-    let new_env_var = values.join(";");
-    env.set_value(var, &new_env_var)?;
-    unsafe { std::env::set_var(var, &new_env_var) };
-    notify_system();
+    if found {
+        let new_env_var = values.join(";");
+        env.set_value(var, &new_env_var)?;
+        unsafe { std::env::set_var(var, &new_env_var) };
+        notify_system();
+    }
     Ok(found)
 }
 
 /// Check if a value exists in the Windows environment variable list (separated
-/// by `;`).
+/// by `;`). The comparison is case-insensitive.
 pub fn exists_in_list<T1, T2>(var: T1, value: T2) -> Result<bool>
 where
     T1: AsRef<str>,
@@ -160,7 +170,7 @@ where
     // locked in `get`
     let env_var = get(var)?;
     match env_var {
-        Some(s) => Ok(s.split(';').any(|p| p == value)),
+        Some(s) => Ok(split_list(&s).iter().any(|p| value_eq(p, value))),
         None => Ok(false),
     }
 }
@@ -291,6 +301,32 @@ mod tests {
         assert_eq!(std::env::var(env_var).unwrap(), "test");
         remove(env_var)?;
         assert_eq!(std::env::var(env_var), Err(std::env::VarError::NotPresent));
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_case_insensitive() -> Result<()> {
+        const ENV_VAR: &str = "TEST-LIST-CASE-INSENSITIVE";
+        set(ENV_VAR, "C:\\Foo;C:\\Bar")?;
+        // Duplicate detection and removal ignore ASCII case.
+        assert!(exists_in_list(ENV_VAR, "c:\\foo")?);
+        append(ENV_VAR, "c:\\FOO")?;
+        assert_eq!(get(ENV_VAR)?.unwrap(), "C:\\Foo;C:\\Bar");
+        assert!(remove_from_list(ENV_VAR, "c:\\bar")?);
+        assert_eq!(get(ENV_VAR)?.unwrap(), "C:\\Foo");
+        remove(ENV_VAR)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_ignores_empty_segments() -> Result<()> {
+        const ENV_VAR: &str = "TEST-LIST-EMPTY-SEGMENTS";
+        set(ENV_VAR, "a;;b;")?;
+        assert!(exists_in_list(ENV_VAR, "b")?);
+        // Empty segments are dropped when the list is rewritten.
+        append(ENV_VAR, "c")?;
+        assert_eq!(get(ENV_VAR)?.unwrap(), "a;b;c");
+        remove(ENV_VAR)?;
         Ok(())
     }
 
