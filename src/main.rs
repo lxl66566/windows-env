@@ -56,7 +56,7 @@ fn run() -> windows_env::Result<ExitCode> {
 
         Subcommand::Get { var } => {
             if let Some(value) = windows_env::get(&var)? {
-                println!("{value}")
+                println!("{value}");
             } else {
                 eprintln!("{var} not found");
                 return Ok(ExitCode::FAILURE);

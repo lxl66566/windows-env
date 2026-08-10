@@ -2,7 +2,7 @@
 name         = "windows-env"
 version      = "0.3.0"
 edition      = "2021"
-rust-version = "1.74"
+rust-version = "1.82"
 description  = "Easily manage Windows environment variables permanently."
 readme       = "README.md"
 homepage     = "https://github.com/lxl66566/windows-env"
@@ -19,9 +19,6 @@ include      = [
   "/tests/**",
 ]
 
-[lib]
-name = "windows_env"
-
 [[bin]]
 name              = "wenv"
 path              = "src/main.rs"
@@ -33,16 +30,13 @@ name = "main"
 [dependencies]
 palc      = { version = "0.0.2", optional = true }
 thiserror = "2"
-windows   = {
-  version  = "0.62.1",
-  features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_System_Environment",
-    "Win32_System_Threading",
-    "Win32_UI_WindowsAndMessaging",
-  ]
-}
+windows   = { version = "0.62.1", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Environment",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
 winreg    = "0.56.0"
 
 [features]

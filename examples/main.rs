@@ -12,5 +12,6 @@ fn main() -> std::io::Result<()> {
     assert!(windows_env::exists_in_list("TEST_ENV", "test1")?);
 
     windows_env::remove("TEST_ENV")?;
+    println!("test finished");
     Ok(())
 }

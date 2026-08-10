@@ -1,5 +1,3 @@
-toml-version = "v1.0.0"
-
 [files]
 include              = ["**/*.toml"]
 exclude              = ["target/*", "node_modules/*"]
@@ -12,3 +10,8 @@ key-value-equals-sign-alignment   = true
 key-value-equals-sign-space-width = 1
 line-ending                       = "lf"
 line-width                        = 120
+
+[[schemas]]
+toml-version = "v1.0.0"
+path         = "tombi://www.schemastore.org/cargo.json"
+include      = ["Cargo.toml"]
