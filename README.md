@@ -11,7 +11,7 @@ Features:
 - as lib:
   ```toml
   [target."cfg(windows)".dependencies]
-  windows_env = "0.2.0"
+  windows_env = "0.3"
   ```
 - as executable binary:
   ```sh
@@ -43,7 +43,7 @@ Features:
   }
   ```
 
-  - using windows-env as a lib will affect the current process, so you can use the new env by spawning processes after modifying env in rust code.
+  using windows-env as a lib will affect the current process, so you can use the new env by spawning processes after modifying env in rust code.
 
 ## Compare
 
@@ -59,3 +59,4 @@ Features:
 
 - v0.1.1: 1.70
 - v0.3.0: 1.82
+- v0.3.1: 1.85

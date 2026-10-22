@@ -1,8 +1,8 @@
 [package]
 name         = "windows-env"
-version      = "0.3.0"
-edition      = "2021"
-rust-version = "1.82"
+version      = "0.3.1"
+edition      = "2024"
+rust-version = "1.85"
 description  = "Easily manage Windows environment variables permanently."
 readme       = "README.md"
 repository   = "https://github.com/lxl66566/windows-env"
