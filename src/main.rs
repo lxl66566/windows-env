@@ -1,35 +1,44 @@
 use std::process::ExitCode;
 
-use palc::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser, Clone)]
-#[command(version, long_about)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
-    command: Subcommand,
+    command: Commands,
+}
+
+/// A var name and its value.
+/// options.
+#[derive(Debug, Args, Clone)]
+struct VarValue {
+    var: String,
+    #[arg(allow_hyphen_values = true)]
+    value: String,
 }
 
 #[derive(Debug, Subcommand, Clone)]
-enum Subcommand {
+enum Commands {
     /// Set a var in the Windows environment variable (as REG_SZ).
-    Set { var: String, value: String },
+    Set(VarValue),
     /// Set a var as REG_EXPAND_SZ so that %VAR% placeholders inside the value
     /// are expanded by consumers.
-    SetExpandString { var: String, value: String },
+    SetExpandString(VarValue),
     /// Get a var from the Windows environment variable.
     Get { var: String },
     /// Remove a var from the Windows environment variable.
     Remove { var: String },
     /// Check if a value exists in the Windows environment variable list.
     /// Exits with code 1 if the value does not exist.
-    Exists { var: String, value: String },
+    Exists(VarValue),
     /// Append a value at the end to the Windows environment variable list
-    Append { var: String, value: String },
+    Append(VarValue),
     /// Prepend a value at the beginning to the Windows environment variable
     /// list
-    Prepend { var: String, value: String },
+    Prepend(VarValue),
     /// Remove a value from the Windows environment variable list
-    RemoveFromList { var: String, value: String },
+    RemoveFromList(VarValue),
 }
 
 fn main() -> ExitCode {
@@ -44,17 +53,17 @@ fn main() -> ExitCode {
 
 fn run() -> windows_env::Result<ExitCode> {
     match Cli::parse().command {
-        Subcommand::Set { var, value } => {
+        Commands::Set(VarValue { var, value }) => {
             windows_env::set(&var, &value)?;
             println!("{var}={value}");
         },
 
-        Subcommand::SetExpandString { var, value } => {
+        Commands::SetExpandString(VarValue { var, value }) => {
             windows_env::set_expand_string(&var, &value)?;
             println!("{var}={value} (REG_EXPAND_SZ)");
         },
 
-        Subcommand::Get { var } => {
+        Commands::Get { var } => {
             if let Some(value) = windows_env::get(&var)? {
                 println!("{value}");
             } else {
@@ -63,12 +72,12 @@ fn run() -> windows_env::Result<ExitCode> {
             }
         },
 
-        Subcommand::Remove { var } => {
+        Commands::Remove { var } => {
             windows_env::remove(&var)?;
             println!("{var} removed");
         },
 
-        Subcommand::Exists { var, value } => {
+        Commands::Exists(VarValue { var, value }) => {
             let exists = windows_env::exists_in_list(&var, &value)?;
             println!("{exists}");
             if !exists {
@@ -76,17 +85,17 @@ fn run() -> windows_env::Result<ExitCode> {
             }
         },
 
-        Subcommand::Append { var, value } => {
+        Commands::Append(VarValue { var, value }) => {
             windows_env::append(&var, &value)?;
             println!("appended: {value} to {var}");
         },
 
-        Subcommand::Prepend { var, value } => {
+        Commands::Prepend(VarValue { var, value }) => {
             windows_env::prepend(&var, &value)?;
             println!("prepended: {value} to {var}");
         },
 
-        Subcommand::RemoveFromList { var, value } => {
+        Commands::RemoveFromList(VarValue { var, value }) => {
             if windows_env::remove_from_list(&var, &value)? {
                 println!("removed: {value} from {var}");
             } else {

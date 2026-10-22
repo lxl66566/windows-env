@@ -5,7 +5,6 @@ edition      = "2021"
 rust-version = "1.82"
 description  = "Easily manage Windows environment variables permanently."
 readme       = "README.md"
-homepage     = "https://github.com/lxl66566/windows-env"
 repository   = "https://github.com/lxl66566/windows-env"
 license      = "MIT"
 keywords     = ["env", "environment", "registry", "windows"]
@@ -28,7 +27,7 @@ required-features = ["bin"]
 name = "main"
 
 [dependencies]
-palc      = { version = "0.0.2", optional = true }
+clap      = { version = "4", features = ["derive"], optional = true }
 thiserror = "2"
 windows   = { version = "0.62.1", features = [
   "Win32_Foundation",
@@ -41,7 +40,7 @@ winreg    = "0.56.0"
 
 [features]
 default = []
-bin     = ["palc"]
+bin     = ["clap"]
 
 [lints.clippy]
 all                     = { level = "warn", priority = -1 }

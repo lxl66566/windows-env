@@ -16,4 +16,4 @@ jobs:
       - name: Setup sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -- --test-threads=1
+      - run: cargo test --all-features -- --test-threads=1
